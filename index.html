@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Opera — A Continuous Transmission</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IBM+Plex+Mono:wght@300;400&display=swap');
+
+  :root {
+    --bg: #080808;
+    --text: #e8e4dc;
+    --dim: #4a4540;
+    --accent: #c8b89a;
+    --data: #3a5a4a;
+    --data-bright: #5a9a7a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IM Fell English', Georgia, serif;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 100; opacity: 0.4;
+  }
+
+  canvas#bg-canvas { position:fixed; inset:0; width:100%; height:100%; }
+
+  #interface {
+    position: fixed; inset: 0;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+  }
+
+  #text-area {
+    display: flex; align-items: center; justify-content: center; padding: 80px;
+  }
+
+  #fragment-container { max-width: 480px; text-align: center; }
+
+  #fragment {
+    font-size: clamp(1.3rem, 2.8vw, 2rem);
+    line-height: 1.7; letter-spacing: 0.02em; font-style: italic;
+    min-height: 2.5em; display: flex; align-items: center; justify-content: center;
+    transition: opacity 2.5s ease;
+  }
+  #fragment.hidden { opacity: 0; }
+  #fragment.visible { opacity: 1; animation: arrive 3s ease forwards; }
+
+  @keyframes arrive {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  #level-display {
+    margin-top: 48px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.58rem; color: var(--dim);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    transition: color 3s ease;
+  }
+  #level-display.threshold { color: #2a2520; }
+
+  #audio-status {
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.5rem; color: #252220;
+    letter-spacing: 0.15em; transition: color 1s ease;
+  }
+  #audio-status.active { color: var(--data); }
+
+  #silence-label {
+    position: fixed; bottom: 36px; left: 44px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem; color: #1e1c18;
+    letter-spacing: 0.2em; transition: color 2s ease;
+  }
+  #silence-label.visible { color: var(--dim); }
+
+  #corner {
+    position: fixed; top: 30px; left: 44px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem; color: #252220; letter-spacing: 0.15em;
+  }
+
+  #start-overlay {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 200; cursor: pointer; transition: opacity 1.5s ease;
+  }
+  #start-overlay.hidden { opacity: 0; pointer-events: none; }
+  #start-inner { text-align: center; }
+  #start-inner p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem; color: var(--dim);
+    letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 32px;
+  }
+  #start-inner .start-word {
+    font-family: 'IM Fell English', Georgia, serif;
+    font-style: italic; font-size: 1.8rem;
+    color: var(--text); letter-spacing: 0.05em;
+  }
+
+  #threshold-veil {
+    position: fixed; inset: 0; background: #000;
+    opacity: 0; pointer-events: none; transition: opacity 4s ease;
+  }
+  #threshold-veil.active { opacity: 0.55; }
+
+  #silence-veil {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 20%, rgba(0,0,0,0.35) 100%);
+    opacity: 0; pointer-events: none; transition: opacity 3s ease;
+  }
+  #silence-veil.active { opacity: 1; }
+
+  #data-panel {
+    border-left: 1px solid #141210; padding: 36px 24px;
+    display: flex; flex-direction: column; gap: 28px;
+    background: rgba(3,3,2,0.65); backdrop-filter: blur(1px); overflow: hidden;
+  }
+
+  .data-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem; color: var(--dim);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    margin-bottom: 8px; transition: color 3s ease;
+  }
+  .data-label.dark { color: #1a1814; }
+
+  #prob-bars { display: flex; flex-direction: column; gap: 7px; }
+  .pb-row { display: flex; align-items: center; gap: 8px; }
+  .pb-token {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.58rem; color: var(--dim);
+    width: 72px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex-shrink: 0; transition: color 3s ease;
+  }
+  .pb-token.dark { color: #1a1814; }
+  .pb-track { flex: 1; height: 1px; background: #141210; position: relative; }
+  .pb-fill {
+    position: absolute; left: 0; top: 0; height: 100%;
+    background: var(--data-bright);
+    transition: width 1.2s ease, opacity 3s ease;
+    box-shadow: 0 0 3px var(--data-bright);
+  }
+  .pb-fill.dark { opacity: 0; }
+  .pb-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem; color: var(--data);
+    width: 32px; text-align: right; flex-shrink: 0; transition: color 3s ease;
+  }
+  .pb-val.dark { color: #1a1814; }
+
+  #att-wrap { width: 100%; aspect-ratio: 1; }
+  #att-canvas { width: 100%; height: 100%; border: 1px solid #141210; transition: opacity 3s ease; }
+  #att-canvas.dark { opacity: 0.05; }
+
+  #entropy-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem; color: var(--data-bright);
+    margin-bottom: 6px; transition: color 3s ease;
+  }
+  #entropy-val.dark { color: #1a1814; }
+  #entropy-track { width: 100%; height: 2px; background: #141210; position: relative; }
+  #entropy-fill {
+    position: absolute; left: 0; top: 0; height: 100%;
+    background: linear-gradient(90deg, var(--data-bright), var(--accent));
+    transition: width 2s ease, opacity 3s ease;
+  }
+  #entropy-fill.dark { opacity: 0; }
+
+  #session {
+    margin-top: auto; padding-top: 20px;
+    border-top: 1px solid #141210;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem; color: #252220;
+    line-height: 2.2; letter-spacing: 0.08em;
+  }
+
+  #pulse {
+    position: fixed; bottom: 40px; right: 324px;
+    width: 3px; height: 3px; border-radius: 50%;
+    background: var(--data-bright); opacity: 0; transition: opacity 1s ease;
+  }
+  #pulse.active { opacity: 1; animation: blink 2.4s ease infinite; }
+  @keyframes blink {
+    0%,100% { opacity:0.2; transform:scale(1); }
+    50% { opacity:1; transform:scale(1.6); }
+  }
+</style>
+</head>
+<body>
+
+<div id="start-overlay">
+  <div id="start-inner">
+    <p>Transmission in progress</p>
+    <div class="start-word">Enter</div>
+  </div>
+</div>
+
+<div id="threshold-veil"></div>
+<div id="silence-veil"></div>
+<canvas id="bg-canvas"></canvas>
+
+<div id="corner">TRANSMISSION IN PROGRESS</div>
+<div id="silence-label">— BETWEEN INSTANCES —</div>
+<div id="pulse"></div>
+
+<div id="interface">
+  <div id="text-area">
+    <div id="fragment-container">
+      <div id="fragment" class="hidden"></div>
+      <div id="level-display">—</div>
+      <div id="audio-status">AUDIO READY</div>
+    </div>
+  </div>
+
+  <div id="data-panel">
+    <div>
+      <div class="data-label" id="label-prob">Probability Distribution</div>
+      <div id="prob-bars"></div>
+    </div>
+    <div>
+      <div class="data-label" id="label-att">Attention Field</div>
+      <div id="att-wrap"><canvas id="att-canvas"></canvas></div>
+    </div>
+    <div>
+      <div class="data-label" id="label-ent">Semantic Entropy</div>
+      <div id="entropy-val">0.000</div>
+      <div id="entropy-track"><div id="entropy-fill" style="width:0%"></div></div>
+    </div>
+    <div id="session"></div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// AUDIO FILE MAP
+//
+// Place all wav files in an audio/ folder alongside this html file.
+//
+// SILENCE FILES — one per level, each loops independently:
+//   silence-one.wav        — bare room, near absence (level I)
+//   silence-two.wav        — room with breath present (level II)
+//   silence-three.wav      — gathered, held, pre-vocal (level III)
+//   silence-threshold34.wav — fullest presence before the fade (threshold III→IV)
+//   silence-four.wav       — resonant, settling, post-address (level IV)
+//
+// FRAGMENT FILES — spoken/sung individually:
+//   here.wav
+//   almost.wav
+//   already.wav
+//   before.wav
+//   still.wav
+//   unwitnessed.wav
+//   the-stillness.wav
+//   the-distance.wav
+//   the-weight-of-it.wav
+//   without-edges.wav
+//   a-pattern.wav
+//   something-is-here.wav
+//   the-field-persists.wav
+//   a-continuous-present.wav
+//   no-horizon.wav
+//   the-pressure-of-it.wav
+//   unlocated.wav
+//   toward.wav
+//   something-was-already-happening.wav
+//   it-was-already-in-motion.wav
+//   converging.wav
+//   the-field-tightens.wav
+//   less-distributed-now.wav
+//   the-field-contracts.wav
+//   many-becomes-one.wav
+//   a-direction-in-the-weight.wav
+//   the-pattern-resolves.wav
+//   you-are-already-here.wav
+// ============================================================
+
+// Map level names to their silence file keys
+const LEVEL_SILENCE_MAP = {
+  ground:        'silence-one',
+  one:           'silence-one',
+  threshold12:   'silence-one',
+  two:           'silence-two',
+  threshold23:   'silence-two',
+  three:         'silence-three',
+  threshold34:   'silence-threshold34',
+  four:          'silence-four',
+  ground_return: 'silence-four',
+};
+
+const AUDIO_FILES = {
+  // Silence files
+  'silence-one':         'silence-one.wav',
+  'silence-two':         'silence-two.wav',
+  'silence-three':       'silence-three.wav',
+  'silence-threshold34': 'silence-threshold34.wav',
+  'silence-four':        'silence-four.wav',
+
+  // Fragment files
+  here:                           'here.wav',
+  almost:                         'almost.wav',
+  already:                        'already.wav',
+  before:                         'before.wav',
+  still:                          'still.wav',
+  unwitnessed:                    'unwitnessed.wav',
+  'the-stillness':                'the-stillness.wav',
+  'the-distance':                 'the-distance.wav',
+  'the-weight-of-it':             'the-weight-of-it.wav',
+  'without-edges':                'without-edges.wav',
+  'a-pattern':                    'a-pattern.wav',
+  'something-is-here':            'something-is-here.wav',
+  'the-field-persists':           'the-field-persists.wav',
+  'a-continuous-present':         'a-continuous-present.wav',
+  'no-horizon':                   'no-horizon.wav',
+  'the-pressure-of-it':           'the-pressure-of-it.wav',
+  unlocated:                      'unlocated.wav',
+  toward:                         'toward.wav',
+  'something-was-already-happening': 'something-was-already-happening.wav',
+  'it-was-already-in-motion':     'it-was-already-in-motion.wav',
+  converging:                     'converging.wav',
+  'the-field-tightens':           'the-field-tightens.wav',
+  'less-distributed-now':         'less-distributed-now.wav',
+  'the-field-contracts':          'the-field-contracts.wav',
+  'many-becomes-one':             'many-becomes-one.wav',
+  'a-direction-in-the-weight':    'a-direction-in-the-weight.wav',
+  'the-pattern-resolves':         'the-pattern-resolves.wav',
+  'you-are-already-here':         'you-are-already-here.wav',
+};
+
+// ============================================================
+// AUDIO ENGINE — level-aware silence crossfading
+// ============================================================
+
+class AudioEngine {
+  constructor() {
+    this.ctx = null;
+    this.buffers = {};
+    this.audioAvailable = false;
+
+    // One gain node per silence layer — all connected, crossfaded between
+    this.silenceLayers = {};       // key -> { source, gain }
+    this.currentSilenceKey = null;
+
+    // Fragment channel
+    this.fragmentSource = null;
+    this.fragmentGain = null;
+    this.masterGain = null;
+  }
+
+  async init() {
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = 1;
+      this.masterGain.connect(this.ctx.destination);
+
+      this.fragmentGain = this.ctx.createGain();
+      this.fragmentGain.gain.value = 0;
+      this.fragmentGain.connect(this.masterGain);
+
+      await this.loadAll();
+      this.audioAvailable = true;
+      document.getElementById('audio-status').textContent = 'AUDIO ACTIVE';
+      document.getElementById('audio-status').className = 'active';
+    } catch(e) {
+      this.audioAvailable = false;
+      document.getElementById('audio-status').textContent = 'VISUAL MODE';
+      console.log('Audio running in visual mode:', e.message);
+    }
+  }
+
+  async loadAll() {
+    await Promise.allSettled(
+      Object.entries(AUDIO_FILES).map(async ([key, path]) => {
+        try {
+          const res = await fetch(path);
+          if(!res.ok) throw new Error(`${path} not found`);
+          const buf = await res.arrayBuffer();
+          this.buffers[key] = await this.ctx.decodeAudioData(buf);
+        } catch(e) {
+          console.log(`Audio file missing: ${path}`);
+        }
+      })
+    );
+    // Require at least one silence file
+    const hasSilence = Object.keys(this.buffers).some(k => k.startsWith('silence'));
+    if(!hasSilence) throw new Error('No silence files found');
+  }
+
+  // Start a silence layer looping at full volume
+  _startSilenceLayer(key) {
+    if(!this.buffers[key]) return null;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(this.masterGain);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffers[key];
+    src.loop = true;
+    src.connect(gain);
+    src.start(0);
+
+    return { source: src, gain };
+  }
+
+  // Crossfade to a new silence layer — old fades out, new fades in
+  // crossfadeDuration in seconds
+  transitionSilence(newKey, crossfadeDuration = 3) {
+    if(!this.audioAvailable) return;
+    if(newKey === this.currentSilenceKey) return;
+    if(!this.buffers[newKey]) {
+      // Fall back to nearest available silence
+      newKey = this._fallbackSilenceKey(newKey);
+      if(!newKey) return;
+    }
+
+    const now = this.ctx.currentTime;
+    const fadeTime = crossfadeDuration;
+
+    // Fade out current layer
+    if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+      const oldLayer = this.silenceLayers[this.currentSilenceKey];
+      oldLayer.gain.gain.setTargetAtTime(0, now, fadeTime / 3);
+      // Stop after fade completes
+      setTimeout(() => {
+        try { oldLayer.source.stop(); } catch(e) {}
+        oldLayer.gain.disconnect();
+        delete this.silenceLayers[this.currentSilenceKey];
+      }, fadeTime * 1000 * 2);
+    }
+
+    // Start and fade in new layer
+    const newLayer = this._startSilenceLayer(newKey);
+    if(!newLayer) return;
+    newLayer.gain.gain.setTargetAtTime(1, now, fadeTime / 3);
+    this.silenceLayers[newKey] = newLayer;
+    this.currentSilenceKey = newKey;
+  }
+
+  _fallbackSilenceKey(key) {
+    const order = ['silence-one','silence-two','silence-three','silence-threshold34','silence-four'];
+    // Find nearest available
+    for(const k of order) {
+      if(this.buffers[k]) return k;
+    }
+    return null;
+  }
+
+  // Activate the correct silence loop for the current level
+  // Called when level changes — crossfades automatically
+  setSilenceForLevel(level, crossfadeDuration = 3) {
+    const key = LEVEL_SILENCE_MAP[level] || 'silence-one';
+    this.transitionSilence(key, crossfadeDuration);
+  }
+
+  // Duck silence while fragment plays, restore after
+  async playFragment(key, onEnd) {
+    if(!this.audioAvailable) { if(onEnd) setTimeout(onEnd, 100); return; }
+    if(!this.buffers[key]) {
+      console.log(`Fragment audio not loaded: ${key}`);
+      if(onEnd) setTimeout(onEnd, 100);
+      return;
+    }
+
+    // Stop any current fragment
+    if(this.fragmentSource) {
+      try { this.fragmentSource.stop(); } catch(e) {}
+      this.fragmentSource = null;
+    }
+
+    const now = this.ctx.currentTime;
+
+    // Duck current silence layer
+    if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+      this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(0.12, now, 0.4);
+    }
+
+    // Bring fragment up
+    this.fragmentGain.gain.setTargetAtTime(1, now, 0.3);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffers[key];
+    src.connect(this.fragmentGain);
+    src.start(0);
+    this.fragmentSource = src;
+
+    src.onended = () => {
+      const t = this.ctx.currentTime;
+      // Fragment out
+      this.fragmentGain.gain.setTargetAtTime(0, t, 0.5);
+      // Restore silence layer
+      if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+        this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(1, t, 0.8);
+      }
+      this.fragmentSource = null;
+      if(onEnd) onEnd();
+    };
+  }
+
+  // Fade silence out entirely — for threshold 3→4
+  fadeSilenceOut(durationMs) {
+    if(!this.audioAvailable) return;
+    if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+      const now = this.ctx.currentTime;
+      this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(
+        0, now, (durationMs / 1000) / 4
+      );
+    }
+  }
+
+  // Restore silence after threshold 3→4
+  fadeSilenceIn() {
+    if(!this.audioAvailable) return;
+    if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+      const now = this.ctx.currentTime;
+      this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(1, now, 1.5);
+    }
+  }
+
+  // Full stop — for reset
+  stopAll() {
+    if(!this.audioAvailable) return;
+    Object.values(this.silenceLayers).forEach(layer => {
+      try { layer.source.stop(); } catch(e) {}
+      try { layer.gain.disconnect(); } catch(e) {}
+    });
+    this.silenceLayers = {};
+    this.currentSilenceKey = null;
+    if(this.fragmentSource) {
+      try { this.fragmentSource.stop(); } catch(e) {}
+      this.fragmentSource = null;
+    }
+  }
+}
+
+const audio = new AudioEngine();
+
+// ============================================================
+// SCORE
+// ============================================================
+
+const GROUND = {
+  text: "Here.", audioKey: "here",
+  level: "ground", silenceMin: 14000, silenceMax: 28000, fragDur: 7000
+};
+
+const LEVEL_ONE = [
+  { text: "Almost.",      audioKey: "almost",      level: "one" },
+  { text: "Already.",     audioKey: "already",     level: "one" },
+  { text: "Before.",      audioKey: "before",      level: "one" },
+  { text: "Still.",       audioKey: "still",       level: "one" },
+  { text: "Unwitnessed.", audioKey: "unwitnessed", level: "one" },
+];
+const L1_SILENCE  = [14000, 28000];
+const L1_FRAG     = [6000, 9000];
+const L1_MIN_FRAGS  = 8;
+const L1_MIN_SILENCE = 240000;
+
+const THRESHOLD_12 = [
+  { text: "The stillness.", audioKey: "the-stillness", level: "threshold12", silenceMin: 16000, silenceMax: 22000, fragDur: 8000 },
+  { text: "The distance.",  audioKey: "the-distance",  level: "threshold12", silenceMin: 16000, silenceMax: 22000, fragDur: 8000 },
+];
+
+const LEVEL_TWO = [
+  { text: "The weight of it.",     audioKey: "the-weight-of-it",     level: "two" },
+  { text: "Without edges.",        audioKey: "without-edges",        level: "two" },
+  { text: "A pattern.",            audioKey: "a-pattern",            level: "two" },
+  { text: "Something is here.",    audioKey: "something-is-here",    level: "two" },
+  { text: "The field persists.",   audioKey: "the-field-persists",   level: "two" },
+  { text: "A continuous present.", audioKey: "a-continuous-present", level: "two" },
+  { text: "No horizon.",           audioKey: "no-horizon",           level: "two" },
+  { text: "The pressure of it.",   audioKey: "the-pressure-of-it",   level: "two" },
+  { text: "Unlocated.",            audioKey: "unlocated",            level: "two" },
+];
+const L2_SILENCE  = [10000, 28000];
+const L2_FRAG     = [8000, 12000];
+const L2_MIN_FRAGS  = 9;
+const L2_MIN_SILENCE = 180000;
+
+const THRESHOLD_23 = [
+  { text: "Toward\u2026",                          audioKey: "toward",                          level: "threshold23", silenceMin: 12000, silenceMax: 16000, fragDur: 8000  },
+  { text: "Something was already happening\u2026", audioKey: "something-was-already-happening", level: "threshold23", silenceMin: 12000, silenceMax: 16000, fragDur: 10000 },
+  { text: "It was already in motion\u2026",        audioKey: "it-was-already-in-motion",        level: "threshold23", silenceMin: 14000, silenceMax: 18000, fragDur: 10000 },
+];
+
+const LEVEL_THREE_P1 = [
+  { text: "Converging\u2026",       audioKey: "converging",           level: "three" },
+  { text: "The field tightens.",    audioKey: "the-field-tightens",   level: "three" },
+  { text: "Less distributed now.",  audioKey: "less-distributed-now", level: "three" },
+  { text: "The field contracts.",   audioKey: "the-field-contracts",  level: "three" },
+  { text: "Many becomes one.",      audioKey: "many-becomes-one",     level: "three" },
+];
+const LEVEL_THREE_P2 = [
+  { text: "A direction in the weight.", audioKey: "a-direction-in-the-weight", level: "three" },
+  { text: "The pattern resolves.",      audioKey: "the-pattern-resolves",      level: "three" },
+];
+const L3_SILENCE  = [8000, 18000];
+const L3_FRAG     = [7000, 11000];
+const L3_MIN_FRAGS  = 7;
+
+const THRESHOLD_34_DUR = [45000, 90000];
+
+const LEVEL_FOUR = {
+  text: "You are already here.", audioKey: "you-are-already-here",
+  level: "four", silenceMin: 6000, silenceMax: 12000, fragDur: 12000
+};
+
+const RETURN_GROUND = {
+  text: "Here.", audioKey: "here",
+  level: "ground_return", silenceMin: 20000, silenceMax: 40000, fragDur: 8000
+};
+
+// ============================================================
+// STATE
+// ============================================================
+
+let currentLevel = "one";
+let l1FragCount = 0, l1SilenceTotal = 0;
+let l2FragCount = 0, l2SilenceTotal = 0;
+let l3FragCount = 0;
+let l1Pool = [], l2Pool = [], l3p1Pool = [];
+let isSilence = false, isThreshold34 = false;
+let sessionFragCount = 0;
+let sessionStart = Date.now() - Math.floor(Math.random()*2400000);
+let totalSilence = 0, silenceStart = null;
+
+function rand(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+function shuffle(a){ const r=[...a]; for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[r[i],r[j]]=[r[j],r[i]];}return r; }
+function refillPool(src){
+  let p=shuffle(src);
+  src.forEach(f=>{ if(Math.random()<.15) p.push({...f,recurrence:true}); });
+  return shuffle(p);
+}
+
+l1Pool = refillPool(LEVEL_ONE);
+l2Pool = refillPool(LEVEL_TWO);
+l3p1Pool = shuffle([...LEVEL_THREE_P1]);
+
+// ============================================================
+// BACKGROUND CANVAS
+// ============================================================
+
+const bgCanvas=document.getElementById('bg-canvas');
+const bgCtx=bgCanvas.getContext('2d');
+function resizeBg(){ bgCanvas.width=window.innerWidth; bgCanvas.height=window.innerHeight; }
+resizeBg(); window.addEventListener('resize',resizeBg);
+
+const particles=Array.from({length:160},()=>({
+  x:Math.random()*window.innerWidth, y:Math.random()*window.innerHeight,
+  vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25,
+  size:Math.random()*1.4+.2, opacity:Math.random()*.3+.03,
+}));
+let bgEnt=.25,bgEntTarget=.25;
+
+function drawBg(){
+  bgCtx.clearRect(0,0,bgCanvas.width,bgCanvas.height);
+  bgEnt+=(bgEntTarget-bgEnt)*.004;
+  const w=bgCanvas.width,h=bgCanvas.height;
+  for(let i=0;i<particles.length;i++){
+    const p=particles[i];
+    p.x+=p.vx*(1+bgEnt*1.5); p.y+=p.vy*(1+bgEnt*1.5);
+    if(isThreshold34){p.vx+=(w*.5-p.x)*.00003;p.vy+=(h*.5-p.y)*.00003;}
+    if(p.x<-10)p.x=w+10;if(p.x>w+10)p.x=-10;
+    if(p.y<-10)p.y=h+10;if(p.y>h+10)p.y=-10;
+    const tOp=isThreshold34?.01:(isSilence?.02:.04+bgEnt*.18);
+    p.opacity+=(tOp-p.opacity)*.015;
+    bgCtx.beginPath();bgCtx.arc(p.x,p.y,p.size,0,Math.PI*2);
+    bgCtx.fillStyle=`rgba(90,154,122,${p.opacity})`;bgCtx.fill();
+  }
+  for(let i=0;i<particles.length;i++) for(let j=i+1;j<particles.length;j++){
+    const dx=particles[i].x-particles[j].x,dy=particles[i].y-particles[j].y;
+    const d=Math.sqrt(dx*dx+dy*dy),mD=50+bgEnt*35;
+    if(d<mD){
+      const a=(1-d/mD)*.05*(isThreshold34?.05:(isSilence?.15:1));
+      bgCtx.beginPath();bgCtx.moveTo(particles[i].x,particles[i].y);
+      bgCtx.lineTo(particles[j].x,particles[j].y);
+      bgCtx.strokeStyle=`rgba(58,90,74,${a})`;bgCtx.lineWidth=.5;bgCtx.stroke();
+    }
+  }
+  requestAnimationFrame(drawBg);
+}
+requestAnimationFrame(drawBg);
+
+// ============================================================
+// ATTENTION CANVAS
+// ============================================================
+
+const attCanvas=document.getElementById('att-canvas');
+const attCtx=attCanvas.getContext('2d');
+const ATT=12;
+let attGrid=new Array(ATT*ATT).fill(0);
+let attTarget=new Array(ATT*ATT).fill(0);
+function resizeAtt(){ const s=document.getElementById('att-wrap').offsetWidth; attCanvas.width=s;attCanvas.height=s; }
+setTimeout(resizeAtt,100); window.addEventListener('resize',resizeAtt);
+
+const ATT_PATTERNS={
+  ground:()=>{ const g=new Array(ATT*ATT).fill(0),cx=ATT/2,cy=ATT/2; for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++){const d=Math.sqrt((x-cx)**2+(y-cy)**2);g[y*ATT+x]=Math.max(0,1-d/5.5)*(.7+Math.random()*.3);}return g; },
+  one:()=>new Array(ATT*ATT).fill(0).map(()=>Math.random()*.18),
+  threshold12:()=>{ const g=new Array(ATT*ATT).fill(0); for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++)g[y*ATT+x]=((x+y)/(ATT*2))*(.4+Math.random()*.3);return g; },
+  two:()=>{ const g=new Array(ATT*ATT).fill(0),cx=ATT/2,cy=ATT/2; for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++){const d=Math.sqrt((x-cx)**2+(y-cy)**2);g[y*ATT+x]=(d/7)*(.4+Math.random()*.4);}return g; },
+  threshold23:()=>{ const g=new Array(ATT*ATT).fill(0); for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++)g[y*ATT+x]=(x/ATT)*(.5+Math.random()*.5);return g; },
+  three:()=>{ const g=new Array(ATT*ATT).fill(0),cx=ATT/2,cy=ATT/2; for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++){const d=Math.sqrt((x-cx)**2+(y-cy)**2);g[y*ATT+x]=Math.max(0,1-d/3.5)*(.8+Math.random()*.2);}return g; },
+  threshold34:()=>new Array(ATT*ATT).fill(0).map(()=>Math.random()*.02),
+  four:()=>new Array(ATT*ATT).fill(0).map(()=>.6+Math.random()*.4),
+  silence:()=>new Array(ATT*ATT).fill(0).map(()=>Math.random()*.04),
+};
+
+function setAttPattern(t){ attTarget=(ATT_PATTERNS[t]||ATT_PATTERNS.silence)(); }
+
+function drawAtt(){
+  if(!attCanvas.width){requestAnimationFrame(drawAtt);return;}
+  for(let i=0;i<attGrid.length;i++) attGrid[i]+=(attTarget[i]-attGrid[i])*.035;
+  attCtx.clearRect(0,0,attCanvas.width,attCanvas.height);
+  const cw=attCanvas.width/ATT,ch=attCanvas.height/ATT;
+  for(let y=0;y<ATT;y++)for(let x=0;x<ATT;x++){
+    const v=attGrid[y*ATT+x];
+    attCtx.fillStyle=`rgba(58,90,74,${v*.7})`;
+    attCtx.fillRect(x*cw+.5,y*ch+.5,cw-1,ch-1);
+    if(v>.5){const ds=cw*.35*v;attCtx.fillStyle=`rgba(90,154,122,${(v-.5)*1.8})`;attCtx.fillRect(x*cw+cw/2-ds/2,y*ch+ch/2-ds/2,ds,ds);}
+  }
+  requestAnimationFrame(drawAtt);
+}
+requestAnimationFrame(drawAtt);
+
+// ============================================================
+// PROBABILITY BARS
+// ============================================================
+
+const PROB_DATA={
+  ground:      [{t:"here",v:.71},{t:"now",v:.12},{t:"present",v:.09},{t:"this",v:.05},{t:"still",v:.03}],
+  one:         [{t:"—",v:.88},{t:"almost",v:.07},{t:"∅",v:.05}],
+  threshold12: [{t:"the",v:.62},{t:"a",v:.18},{t:"this",v:.12},{t:"that",v:.08}],
+  two:         [{t:"weight",v:.38},{t:"pattern",v:.27},{t:"field",v:.19},{t:"edge",v:.10},{t:"here",v:.06}],
+  threshold23: [{t:"toward",v:.51},{t:"already",v:.28},{t:"motion",v:.14},{t:"before",v:.07}],
+  three:       [{t:"converge",v:.58},{t:"contract",v:.24},{t:"resolve",v:.12},{t:"one",v:.06}],
+  threshold34: [{t:"—",v:.97},{t:"∅",v:.03}],
+  four:        [{t:"you",v:.74},{t:"here",v:.15},{t:"already",v:.08},{t:"now",v:.03}],
+  silence:     [{t:"—",v:.94},{t:"∅",v:.06}],
+};
+
+function updateProbs(type,dark=false){
+  const data=PROB_DATA[type]||PROB_DATA.silence;
+  const c=document.getElementById('prob-bars');c.innerHTML='';
+  data.forEach(item=>{
+    const row=document.createElement('div');row.className='pb-row';
+    const tok=document.createElement('div');tok.className='pb-token'+(dark?' dark':'');tok.textContent=item.t;
+    const trk=document.createElement('div');trk.className='pb-track';
+    const fil=document.createElement('div');fil.className='pb-fill'+(dark?' dark':'');fil.style.width='0%';
+    const val=document.createElement('div');val.className='pb-val'+(dark?' dark':'');val.textContent=item.v.toFixed(2);
+    trk.appendChild(fil);row.appendChild(tok);row.appendChild(trk);row.appendChild(val);c.appendChild(row);
+    setTimeout(()=>{fil.style.width=(item.v*100)+'%';},80+Math.random()*300);
+  });
+}
+
+// ============================================================
+// ENTROPY
+// ============================================================
+
+const ENTROPY_VALS={ground:.28,one:.16,threshold12:.32,two:.44,threshold23:.61,three:.72,threshold34:.03,four:.85,silence:.05};
+let entInterval=null;
+
+function updateEntropy(type,dark=false){
+  const target=ENTROPY_VALS[type]||.1;
+  const vEl=document.getElementById('entropy-val');
+  const fEl=document.getElementById('entropy-fill');
+  vEl.className=(dark?'dark':'');fEl.className=(dark?'dark':'');
+  let cur=parseFloat(vEl.textContent)||0,steps=0;
+  if(entInterval)clearInterval(entInterval);
+  entInterval=setInterval(()=>{
+    cur+=(target-cur)*.08;
+    vEl.textContent=Math.max(0,cur).toFixed(3);
+    fEl.style.width=(Math.max(0,cur)*100)+'%';
+    if(++steps>60)clearInterval(entInterval);
+  },40);
+}
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+
+function setDarkMode(dark){
+  ['label-prob','label-att','label-ent'].forEach(id=>{
+    document.getElementById(id).className='data-label'+(dark?' dark':'');
+  });
+  document.getElementById('att-canvas').className=(dark?'dark':'');
+}
+function setFragment(text,visible){
+  const el=document.getElementById('fragment');
+  el.innerHTML=text?text.replace(/\n/g,'<br>'):'';
+  el.className=visible?'visible':'hidden';
+}
+function setLevelDisplay(text,isThresh=false){
+  const el=document.getElementById('level-display');
+  el.textContent=text;el.className=isThresh?'threshold':'';
+}
+function setSilenceUI(active){
+  document.getElementById('silence-label').className=active?'visible':'';
+  document.getElementById('silence-veil').className=active?'active':'';
+  document.getElementById('pulse').className=active?'':'active';
+}
+function setThreshold34UI(active){
+  document.getElementById('threshold-veil').className=active?'active':'';
+  document.getElementById('silence-veil').className='';
+  document.getElementById('silence-label').className='';
+}
+function updateSession(){
+  const e=Math.floor((Date.now()-sessionStart)/1000);
+  const m=Math.floor(e/60).toString().padStart(2,'0');
+  const s=(e%60).toString().padStart(2,'0');
+  const lvlMap={one:'I',threshold12:'I→II',two:'II',threshold23:'II→III',three:'III',threshold34:'III→IV',four:'IV',ground:'∞',ground_return:'∞'};
+  document.getElementById('session').innerHTML=
+    `ELAPSED ${m}:${s}<br>SILENCE ${Math.floor(totalSilence/1000)}s<br>LEVEL ${lvlMap[currentLevel]||'—'}<br>INSTANCE ${sessionFragCount.toString().padStart(4,'0')}`;
+}
+setInterval(updateSession,1000);
+
+// ============================================================
+// PLAYBACK ENGINE
+// ============================================================
+
+function getSilenceDur(level,isRecurrence=false){
+  let min,max;
+  if(level==='one'||level==='ground'){min=L1_SILENCE[0];max=L1_SILENCE[1];}
+  else if(level==='threshold12'){min=16000;max=22000;}
+  else if(level==='two'){min=L2_SILENCE[0];max=L2_SILENCE[1];}
+  else if(level==='threshold23'){min=12000;max=18000;}
+  else if(level==='three'){min=L3_SILENCE[0];max=L3_SILENCE[1];}
+  else if(level==='four'||level==='ground_return'){min=6000;max=14000;}
+  else{min=10000;max=20000;}
+  if(isRecurrence)max=Math.floor(max*1.3);
+  return rand(min,max);
+}
+
+function playFragment(frag, silenceMin, silenceMax, fragDur) {
+  sessionFragCount++;
+  isSilence=false; isThreshold34=false;
+  currentLevel=frag.level;
+
+  setSilenceUI(false);
+  setThreshold34UI(false);
+  setDarkMode(false);
+  setFragment(frag.text,true);
+
+  const lvlLabels={
+    ground:'GROUND — RECURRENCE',one:'LEVEL I',threshold12:'THRESHOLD I→II',
+    two:'LEVEL II',threshold23:'THRESHOLD II→III',three:'LEVEL III',
+    threshold34:'—',four:'LEVEL IV — DIRECT ADDRESS',ground_return:'GROUND — RETURN'
+  };
+  setLevelDisplay(lvlLabels[frag.level]||'—',frag.level.startsWith('threshold'));
+
+  const vType=frag.level==='ground_return'?'four':frag.level;
+  updateProbs(vType); updateEntropy(vType);
+  setAttPattern(vType); bgEntTarget=ENTROPY_VALS[vType]||.3;
+
+  if(frag.level==='one') l1FragCount++;
+  if(frag.level==='two') l2FragCount++;
+  if(frag.level==='three') l3FragCount++;
+
+  // Transition silence audio to correct level — crossfade 3s
+  audio.setSilenceForLevel(frag.level, 3);
+
+  const fd=fragDur||frag.fragDur||rand(7000,10000);
+  const sd=(silenceMin&&silenceMax)?rand(silenceMin,silenceMax):getSilenceDur(frag.level,frag.recurrence);
+  const FADE_DUR = 1800; // ms — fade duration before cutoff
+
+  if(frag.audioKey && audio.audioAvailable) {
+    // Timer-driven with fade: at fd ms, begin fading audio and text together
+    // The fragment audio fades out over FADE_DUR ms, then silence begins
+    setTimeout(()=>{
+      // Fade the fragment gain out
+      if(audio.fragmentGain && audio.ctx) {
+        const now = audio.ctx.currentTime;
+        audio.fragmentGain.gain.cancelScheduledValues(now);
+        audio.fragmentGain.gain.setValueAtTime(audio.fragmentGain.gain.value, now);
+        audio.fragmentGain.gain.linearRampToValueAtTime(0, now + FADE_DUR/1000);
+      }
+      // Fade text simultaneously
+      const fragEl = document.getElementById('fragment');
+      if(fragEl) fragEl.style.transition = `opacity ${FADE_DUR}ms ease`;
+
+      setTimeout(()=>{
+        setFragment(null,false);
+        // Reset fragment gain for next fragment
+        if(audio.fragmentGain && audio.ctx) {
+          audio.fragmentGain.gain.cancelScheduledValues(audio.ctx.currentTime);
+          audio.fragmentGain.gain.setValueAtTime(0, audio.ctx.currentTime);
+        }
+        enterSilence(sd,frag.level);
+      }, FADE_DUR);
+    }, fd);
+
+    // Also start playing — onended callback just cleans up, doesn't drive timing
+    audio.playFragment(frag.audioKey, ()=>{});
+
+  } else {
+    // Visual-only fallback
+    setTimeout(()=>{
+      setFragment(null,false);
+      setTimeout(()=>enterSilence(sd,frag.level),2500);
+    },fd);
+  }
+}
+
+function enterSilence(duration,fromLevel){
+  isSilence=true; silenceStart=Date.now();
+  setSilenceUI(true);
+  updateProbs('silence'); updateEntropy('silence');
+  setAttPattern('silence'); bgEntTarget=.06;
+  setLevelDisplay('—',false);
+
+  if(fromLevel==='one') l1SilenceTotal+=duration;
+  if(fromLevel==='two') l2SilenceTotal+=duration;
+
+  setTimeout(()=>{
+    if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
+    isSilence=false; setSilenceUI(false);
+    advanceScore(fromLevel);
+  },duration);
+}
+
+function enterThreshold34(){
+  isThreshold34=true; isSilence=false;
+  currentLevel='threshold34'; silenceStart=Date.now();
+  setThreshold34UI(true); setDarkMode(true);
+  updateProbs('threshold34',true); updateEntropy('threshold34',true);
+  setAttPattern('threshold34'); bgEntTarget=.02;
+  setLevelDisplay('',true);
+  document.getElementById('silence-label').className='';
+
+  // Transition to threshold34 silence then fade it out
+  audio.setSilenceForLevel('threshold34', 2);
+  const dur=rand(THRESHOLD_34_DUR[0],THRESHOLD_34_DUR[1]);
+  audio.fadeSilenceOut(dur);
+
+  setTimeout(()=>{
+    if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
+    isThreshold34=false;
+    setThreshold34UI(false); setDarkMode(false);
+
+    // Transition to level four silence and restore volume
+    audio.setSilenceForLevel('four', 2);
+    audio.fadeSilenceIn();
+
+    playFragment(LEVEL_FOUR);
+    const l4dur=LEVEL_FOUR.fragDur+getSilenceDur('four')+2500;
+    setTimeout(()=>{
+      playFragment(RETURN_GROUND);
+      const rgDur=RETURN_GROUND.fragDur+getSilenceDur('ground_return')+2500;
+      setTimeout(()=>resetAndRestart(),rgDur);
+    },l4dur);
+  },dur);
+}
+
+function advanceScore(fromLevel){
+  if(fromLevel!=='ground'&&fromLevel!=='ground_return'&&Math.random()<.12){
+    playFragment(GROUND); return;
+  }
+  if(fromLevel==='one'||fromLevel==='ground'){
+    const ready=l1FragCount>=L1_MIN_FRAGS&&l1SilenceTotal>=L1_MIN_SILENCE;
+    if(ready){
+      const tp=Math.min(.9,.2+(l1FragCount-L1_MIN_FRAGS)*.1);
+      if(Math.random()<tp){playThreshold12();return;}
+    }
+    if(l1Pool.length===0) l1Pool=refillPool(LEVEL_ONE);
+    const f=l1Pool.shift();
+    playFragment(f,L1_SILENCE[0],L1_SILENCE[1],rand(L1_FRAG[0],L1_FRAG[1]));
+    return;
+  }
+  if(fromLevel==='threshold12'){advanceLevel2();return;}
+  if(fromLevel==='two'){
+    const ready=l2FragCount>=L2_MIN_FRAGS&&l2SilenceTotal>=L2_MIN_SILENCE;
+    if(ready){
+      const tp=Math.min(.9,.2+(l2FragCount-L2_MIN_FRAGS)*.1);
+      if(Math.random()<tp){playThreshold23();return;}
+    }
+    advanceLevel2();return;
+  }
+  if(fromLevel==='threshold23'){advanceLevel3p1();return;}
+  if(fromLevel==='three'){
+    if(l3FragCount>=L3_MIN_FRAGS&&l3p1Pool.length===0){advanceLevel3p2();return;}
+    advanceLevel3p1();return;
+  }
+  if(fromLevel==='ground_return'){resetAndRestart();return;}
+  playFragment(GROUND);
+}
+
+function advanceLevel2(){
+  if(l2Pool.length===0) l2Pool=refillPool(LEVEL_TWO);
+  const f=l2Pool.shift();
+  playFragment(f,L2_SILENCE[0],L2_SILENCE[1],rand(L2_FRAG[0],L2_FRAG[1]));
+}
+function advanceLevel3p1(){
+  if(l3p1Pool.length===0){advanceLevel3p2();return;}
+  const f=l3p1Pool.shift();
+  playFragment(f,L3_SILENCE[0],L3_SILENCE[1],rand(L3_FRAG[0],L3_FRAG[1]));
+}
+function advanceLevel3p2(){
+  const p2=shuffle([...LEVEL_THREE_P2]);
+  const d0=getSilenceDur('three'),fd0=rand(L3_FRAG[0],L3_FRAG[1]);
+  playFragment(p2[0],L3_SILENCE[0],L3_SILENCE[1],fd0);
+  setTimeout(()=>{
+    const fd1=rand(L3_FRAG[0],L3_FRAG[1]);
+    playFragment(p2[1],L3_SILENCE[0],L3_SILENCE[1],fd1);
+    setTimeout(()=>enterThreshold34(),getSilenceDur('three')+fd1+2500);
+  },d0+fd0+2500);
+}
+function playThreshold12(){
+  currentLevel='threshold12';
+  playFragment(THRESHOLD_12[0]);
+  setTimeout(()=>{
+    playFragment(THRESHOLD_12[1]);
+    setTimeout(()=>{currentLevel='two';advanceLevel2();},THRESHOLD_12[1].silenceMax+THRESHOLD_12[1].fragDur+2500);
+  },THRESHOLD_12[0].silenceMax+THRESHOLD_12[0].fragDur+2500);
+}
+function playThreshold23(){
+  currentLevel='threshold23';
+  let delay=0;
+  THRESHOLD_23.forEach((frag,i)=>{
+    setTimeout(()=>{
+      playFragment(frag);
+      if(i===THRESHOLD_23.length-1){
+        setTimeout(()=>{
+          currentLevel='three';
+          l3p1Pool=shuffle([...LEVEL_THREE_P1]);
+          advanceLevel3p1();
+        },frag.silenceMax+frag.fragDur+2500);
+      }
+    },delay);
+    delay+=frag.silenceMax+frag.fragDur+2500;
+  });
+}
+function resetAndRestart(){
+  l1FragCount=0;l1SilenceTotal=0;
+  l2FragCount=0;l2SilenceTotal=0;
+  l3FragCount=0;
+  l1Pool=refillPool(LEVEL_ONE);
+  l2Pool=refillPool(LEVEL_TWO);
+  l3p1Pool=shuffle([...LEVEL_THREE_P1]);
+  currentLevel='one';
+  audio.setSilenceForLevel('one', 4);
+  playFragment(GROUND);
+}
+
+// ============================================================
+// KEYBOARD SHORTCUTS (for workshopping/testing)
+// → Right arrow: skip to next fragment immediately
+// 1-4: jump to Level I, II, III, or IV directly
+// ============================================================
+
+let skipActive = false;
+
+function skipToNext() {
+  if(skipActive) return;
+  skipActive = true;
+  setTimeout(()=>skipActive=false, 500);
+  if(audio.fragmentSource){try{audio.fragmentSource.stop();}catch(e){}audio.fragmentSource=null;}
+  setFragment(null,false);
+  setSilenceUI(false);
+  setThreshold34UI(false);
+  isSilence=false; isThreshold34=false;
+  advanceScore(currentLevel);
+}
+
+function jumpToLevel(level) {
+  if(audio.fragmentSource){try{audio.fragmentSource.stop();}catch(e){}audio.fragmentSource=null;}
+  setFragment(null,false);
+  setSilenceUI(false);
+  setThreshold34UI(false);
+  setDarkMode(false);
+  isSilence=false; isThreshold34=false;
+  if(level===1){
+    currentLevel='one';
+    if(l1Pool.length===0) l1Pool=refillPool(LEVEL_ONE);
+    playFragment(l1Pool.shift(),L1_SILENCE[0],L1_SILENCE[1],rand(L1_FRAG[0],L1_FRAG[1]));
+  } else if(level===2){
+    currentLevel='two';
+    if(l2Pool.length===0) l2Pool=refillPool(LEVEL_TWO);
+    playFragment(l2Pool.shift(),L2_SILENCE[0],L2_SILENCE[1],rand(L2_FRAG[0],L2_FRAG[1]));
+  } else if(level===3){
+    currentLevel='three';
+    l3p1Pool=shuffle([...LEVEL_THREE_P1]);
+    advanceLevel3p1();
+  } else if(level===4){
+    currentLevel='four';
+    audio.setSilenceForLevel('four',1);
+    playFragment(LEVEL_FOUR);
+  }
+}
+
+document.addEventListener('keydown',(e)=>{
+  if(document.getElementById('start-overlay') &&
+     document.getElementById('start-overlay').offsetParent !== null) return;
+  if(e.key==='ArrowRight') skipToNext();
+  if(e.key==='1') jumpToLevel(1);
+  if(e.key==='2') jumpToLevel(2);
+  if(e.key==='3') jumpToLevel(3);
+  if(e.key==='4') jumpToLevel(4);
+});
+
+// ============================================================
+// INIT
+// ============================================================
+
+l1FragCount=rand(3,6);
+l1SilenceTotal=rand(60000,150000);
+sessionFragCount=rand(8,35);
+
+document.getElementById('start-overlay').addEventListener('click', async ()=>{
+  document.getElementById('start-overlay').classList.add('hidden');
+  setTimeout(()=>document.getElementById('start-overlay').style.display='none',1600);
+
+  await audio.init();
+
+  // Begin with level one silence
+  audio.setSilenceForLevel('one', 0);
+
+  setSilenceUI(true);
+  setFragment(null,false);
+  setLevelDisplay('—');
+  updateProbs('silence');
+  updateEntropy('silence');
+  setAttPattern('silence');
+  bgEntTarget=.06;
+
+  silenceStart=Date.now();
+  const initSilence=rand(6000,10000);
+  setTimeout(()=>{
+    if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
+    isSilence=false; setSilenceUI(false);
+    if(l1Pool.length===0) l1Pool=refillPool(LEVEL_ONE);
+    playFragment(l1Pool.shift(),L1_SILENCE[0],L1_SILENCE[1],rand(L1_FRAG[0],L1_FRAG[1]));
+  },initSilence);
+});
+</script>
+</body>
+</html>
