@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Opera — A Continuous Transmission</title>
+<title>You Are Already Here — A Continuous Transmission</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IBM+Plex+Mono:wght@300;400&display=swap');
 
@@ -414,6 +414,23 @@ class AudioEngine {
     if(!hasSilence) throw new Error('No silence files found');
   }
 
+  // Find where a recording's fade-in ends: the first 50 ms window that comes
+  // within 6 dB of the file's typical level. Cached per file.
+  _loopStart(key) {
+    this._loopStarts = this._loopStarts || {};
+    if(key in this._loopStarts) return this._loopStarts[key];
+    const buf = this.buffers[key], d = buf.getChannelData(0);
+    const win = Math.floor(buf.sampleRate * 0.05), rms = [];
+    for(let i = 0; i + win <= d.length; i += win) {
+      let s = 0; for(let j = i; j < i + win; j++) s += d[j] * d[j];
+      rms.push(Math.sqrt(s / win));
+    }
+    const median = [...rms].sort((a,b)=>a-b)[Math.floor(rms.length/2)];
+    let k = rms.findIndex(r => r >= median / 2);
+    const t = Math.min(Math.max(0, k) * 0.05, buf.duration / 4);
+    return (this._loopStarts[key] = t);
+  }
+
   // Start a silence layer looping at full volume
   _startSilenceLayer(key) {
     if(!this.buffers[key]) return null;
@@ -424,6 +441,10 @@ class AudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = this.buffers[key];
     src.loop = true;
+    // The silence recordings begin with a fade-in, so looping from 0 drops
+    // the room out for a moment on every repeat. Loop from where it settles.
+    src.loopStart = this._loopStart(key);
+    src.loopEnd = src.buffer.duration;
     src.connect(gain);
     src.start(0);
 
@@ -444,15 +465,19 @@ class AudioEngine {
     const now = this.ctx.currentTime;
     const fadeTime = crossfadeDuration;
 
-    // Fade out current layer
-    if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
-      const oldLayer = this.silenceLayers[this.currentSilenceKey];
+    // Fade out current layer. Capture its key and node now: by the time the
+    // timer fires, currentSilenceKey already names the NEW layer (the old code
+    // then deleted the new layer from the map, which broke ducking under the
+    // voice and the fade at Threshold III->IV).
+    const oldKey = this.currentSilenceKey;
+    const oldLayer = oldKey ? this.silenceLayers[oldKey] : null;
+    if(oldLayer) {
+      oldLayer.gain.gain.cancelScheduledValues(now);
       oldLayer.gain.gain.setTargetAtTime(0, now, fadeTime / 3);
-      // Stop after fade completes
+      delete this.silenceLayers[oldKey];
       setTimeout(() => {
         try { oldLayer.source.stop(); } catch(e) {}
-        oldLayer.gain.disconnect();
-        delete this.silenceLayers[this.currentSilenceKey];
+        try { oldLayer.gain.disconnect(); } catch(e) {}
       }, fadeTime * 1000 * 2);
     }
 
@@ -465,13 +490,18 @@ class AudioEngine {
   }
 
   _fallbackSilenceKey(key) {
+    // Use the recorded silence nearest to the one requested
+    // (e.g. silence-threshold34 -> silence-three, not silence-one).
     const order = ['silence-one','silence-two','silence-three','silence-threshold34','silence-four'];
-    // Find nearest available
-    for(const k of order) {
-      if(this.buffers[k]) return k;
+    const i = Math.max(0, order.indexOf(key));
+    for(let d = 0; d < order.length; d++) {
+      for(const j of [i - d, i + d]) {
+        if(order[j] && this.buffers[order[j]]) return order[j];
+      }
     }
     return null;
   }
+
 
   // Activate the correct silence loop for the current level
   // Called when level changes — crossfades automatically
@@ -511,6 +541,7 @@ class AudioEngine {
     src.start(0);
     this.fragmentSource = src;
 
+    const gen = scoreGen;
     src.onended = () => {
       const t = this.ctx.currentTime;
       // Fragment out
@@ -519,28 +550,29 @@ class AudioEngine {
       if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
         this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(1, t, 0.8);
       }
-      this.fragmentSource = null;
-      if(onEnd) onEnd();
+      if(this.fragmentSource === src) this.fragmentSource = null;
+      if(onEnd && gen === scoreGen) onEnd();
     };
   }
 
   // Fade silence out entirely — for threshold 3→4
-  fadeSilenceOut(durationMs) {
+  fadeSilenceOut(durationMs, delayMs = 0) {
     if(!this.audioAvailable) return;
     if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
-      const now = this.ctx.currentTime;
+      const start = this.ctx.currentTime + delayMs / 1000;
       this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(
-        0, now, (durationMs / 1000) / 4
+        0, start, (durationMs / 1000) / 4
       );
     }
   }
 
-  // Restore silence after threshold 3→4
   fadeSilenceIn() {
     if(!this.audioAvailable) return;
     if(this.currentSilenceKey && this.silenceLayers[this.currentSilenceKey]) {
+      const g = this.silenceLayers[this.currentSilenceKey].gain.gain;
       const now = this.ctx.currentTime;
-      this.silenceLayers[this.currentSilenceKey].gain.gain.setTargetAtTime(1, now, 1.5);
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(1, now, 1.5);
     }
   }
 
@@ -858,6 +890,16 @@ function getSilenceDur(level,isRecurrence=false){
   return rand(min,max);
 }
 
+// Every score timer belongs to one run of the score. Skipping, jumping,
+// leaving or re-entering starts a new run, and timers from the old run do
+// nothing. (Before this, the → key and the 1–4 keys started a second chain
+// of fragments alongside the one already playing.)
+let scoreGen = 0;
+function scoreTimeout(fn, ms) {
+  const gen = scoreGen;
+  return setTimeout(() => { if (gen === scoreGen) fn(); }, ms);
+}
+
 function playFragment(frag, silenceMin, silenceMax, fragDur) {
   if(isExiting) return;
   sessionFragCount++;
@@ -885,7 +927,7 @@ function playFragment(frag, silenceMin, silenceMax, fragDur) {
   if(frag.level==='three') l3FragCount++;
 
   // Transition silence audio to correct level — crossfade 3s
-  audio.setSilenceForLevel(frag.level, 3);
+  if(frag.level!=='ground') audio.setSilenceForLevel(frag.level, 3);
 
   const fd=fragDur||frag.fragDur||rand(7000,10000);
   const sd=(silenceMin&&silenceMax)?rand(silenceMin,silenceMax):getSilenceDur(frag.level,frag.recurrence);
@@ -893,16 +935,16 @@ function playFragment(frag, silenceMin, silenceMax, fragDur) {
   if(frag.audioKey && audio.audioAvailable) {
     // Audio-driven: wait for file to finish naturally, then 500ms pause before silence
     audio.playFragment(frag.audioKey, ()=>{
-      setTimeout(()=>{
+      scoreTimeout(()=>{
         setFragment(null,false);
-        setTimeout(()=>enterSilence(sd,frag.level), 400);
+        scoreTimeout(()=>enterSilence(sd,frag.level), 400);
       }, 300);
     });
   } else {
     // Visual-only fallback
-    setTimeout(()=>{
+    scoreTimeout(()=>{
       setFragment(null,false);
-      setTimeout(()=>enterSilence(sd,frag.level),2500);
+      scoreTimeout(()=>enterSilence(sd,frag.level),2500);
     },fd);
   }
 }
@@ -918,7 +960,7 @@ function enterSilence(duration,fromLevel){
   if(fromLevel==='one') l1SilenceTotal+=duration;
   if(fromLevel==='two') l2SilenceTotal+=duration;
 
-  setTimeout(()=>{
+  scoreTimeout(()=>{
     if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
     isSilence=false; setSilenceUI(false);
     advanceScore(fromLevel);
@@ -937,9 +979,12 @@ function enterThreshold34(){
   // Transition to threshold34 silence then fade it out
   audio.setSilenceForLevel('threshold34', 2);
   const dur=rand(THRESHOLD_34_DUR[0],THRESHOLD_34_DUR[1]);
-  audio.fadeSilenceOut(dur);
+  // Swell into the fullest silence and hold it for the first third, then fade.
+  // (Previously the swell and the fade were scheduled at the same instant,
+  // so this silence was never heard at full presence.)
+  audio.fadeSilenceOut(dur*2/3, dur/3);
 
-  setTimeout(()=>{
+  scoreTimeout(()=>{
     if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
     isThreshold34=false;
     setThreshold34UI(false); setDarkMode(false);
@@ -956,7 +1001,12 @@ function enterThreshold34(){
   },dur);
 }
 
-function advanceScore(fromLevel){
+function advanceScore(fromLevel, noRecurrence=false){
+  // Ground recurrence: "Here." may surface inside any level (12% of the time),
+  // then the score resumes where it was.
+  if(!noRecurrence&&fromLevel!=='ground'&&fromLevel!=='ground_return'&&Math.random()<.12){
+    playFragmentThen(GROUND, ()=>advanceScore(fromLevel, true)); return;
+  }
   if(fromLevel==='one'||fromLevel==='ground'){
     const ready=l1FragCount>=L1_MIN_FRAGS&&l1SilenceTotal>=L1_MIN_SILENCE;
     if(ready){
@@ -1025,12 +1075,12 @@ function playFragmentThen(frag, callback) {
   const vType = frag.level==='ground_return' ? 'four' : frag.level;
   updateProbs(vType); updateEntropy(vType);
   setAttPattern(vType); bgEntTarget = ENTROPY_VALS[vType]||.3;
-  audio.setSilenceForLevel(frag.level, 3);
+  if(frag.level!=='ground') audio.setSilenceForLevel(frag.level, 3);
 
   if(frag.audioKey && audio.audioAvailable) {
     audio.playFragment(frag.audioKey, ()=>{
       if(isExiting) return;
-      setTimeout(()=>{
+      scoreTimeout(()=>{
         setFragment(null, false);
         // Enter silence then call callback
         isSilence=true; silenceStart=Date.now();
@@ -1038,7 +1088,7 @@ function playFragmentThen(frag, callback) {
         updateProbs('silence'); updateEntropy('silence');
         setAttPattern('silence'); bgEntTarget=.06;
         setLevelDisplay('—', false);
-        setTimeout(()=>{
+        scoreTimeout(()=>{
           if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
           isSilence=false; setSilenceUI(false);
           if(callback) callback();
@@ -1048,14 +1098,14 @@ function playFragmentThen(frag, callback) {
   } else {
     // Visual-only fallback
     const fd = frag.fragDur || rand(7000,10000);
-    setTimeout(()=>{
+    scoreTimeout(()=>{
       setFragment(null, false);
       isSilence=true; silenceStart=Date.now();
       setSilenceUI(true);
       updateProbs('silence'); updateEntropy('silence');
       setAttPattern('silence'); bgEntTarget=.06;
       setLevelDisplay('—', false);
-      setTimeout(()=>{
+      scoreTimeout(()=>{
         if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
         isSilence=false; setSilenceUI(false);
         if(callback) callback();
@@ -1103,6 +1153,7 @@ function resetAndRestart(){
 // ============================================================
 
 function exitExperience() {
+  scoreGen++;
   isExiting = true;
 
   // Fade master gain to silence over 1.5s
@@ -1144,6 +1195,7 @@ let skipActive = false;
 
 function skipToNext() {
   if(skipActive) return;
+  scoreGen++;
   skipActive = true;
   setTimeout(()=>skipActive=false, 500);
   if(audio.fragmentSource){try{audio.fragmentSource.stop();}catch(e){}audio.fragmentSource=null;}
@@ -1155,6 +1207,7 @@ function skipToNext() {
 }
 
 function jumpToLevel(level) {
+  scoreGen++;
   if(audio.fragmentSource){try{audio.fragmentSource.stop();}catch(e){}audio.fragmentSource=null;}
   setFragment(null,false);
   setSilenceUI(false);
@@ -1199,6 +1252,7 @@ l1SilenceTotal=rand(60000,150000);
 sessionFragCount=rand(8,35);
 
 async function enterExperience() {
+  scoreGen++;
   isExiting = false;
   const overlay = document.getElementById('start-overlay');
   overlay.classList.add('hidden');
@@ -1243,7 +1297,7 @@ async function enterExperience() {
 
   silenceStart=Date.now();
   const initSilence=rand(6000,10000);
-  setTimeout(()=>{
+  scoreTimeout(()=>{
     if(silenceStart){totalSilence+=Date.now()-silenceStart;silenceStart=null;}
     isSilence=false; setSilenceUI(false);
     if(l1Pool.length===0) l1Pool=refillPool(LEVEL_ONE);
